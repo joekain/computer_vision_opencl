@@ -10,6 +10,9 @@ link_directories(${OpenCL_LIBRARY})
 # OpenCV
 find_package( OpenCV REQUIRED )
 
+find_package(Boost REQUIRED)
+
+message (${Boost_INCLUDE_DIRS})
 # Common settings
 set(CMAKE_C_FLAGS "-std=c99 -Wall")
 set(CMAKE_CXX_FLAGS "-std=c++11")

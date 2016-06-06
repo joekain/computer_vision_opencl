@@ -3,6 +3,7 @@
 #include <math.h>
 #include <vector>
 #include <algorithm>
+#include <boost/compute.hpp>
 
 using namespace cv;
 

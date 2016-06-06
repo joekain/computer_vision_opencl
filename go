@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -e
 
 OUTDIR=_out
 DEFAULT_TARGET=default

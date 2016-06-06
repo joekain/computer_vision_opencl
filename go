@@ -2,13 +2,14 @@
 
 OUTDIR=_out
 DEFAULT_TARGET=default
-BASEDIR=$(dirname $0)
+cd $(dirname $0)
+BASEDIR=$(pwd)
 
 function main {
     if [ "$1" == "" ]; then
-	TARGET=$DEFAULT_TARGET
+	      TARGET=$DEFAULT_TARGET
     else
-	TARGET=$1
+	      TARGET=$1
     fi
 
     $TARGET
@@ -24,20 +25,14 @@ function default {
     build
 }
 
-function run {
+function ps1 {
     build
-    ./_out/src/main
-}
-
-function test {
-    build
-    cd ./_out
-    ctest --output-on-failure
+    cd $BASEDIR/ps1
+    ../_out/ps1/main
 }
 
 function clean {
     rm -rf $OUTDIR
 }
 
-cd $BASEDIR
 main $*

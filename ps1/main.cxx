@@ -4,12 +4,15 @@
 #include <vector>
 #include <algorithm>
 #include <boost/compute.hpp>
+#include <boost/compute/interop/opencv/core.hpp>
 
+namespace compute = boost::compute;
 using namespace cv;
 
 static int num_rho_buckets;
 static int num_angle_buckets = 720;
 static float max_rho = 0;
+
 
 void init(Mat &img)
 {
@@ -45,7 +48,7 @@ void hough_line_acc(Mat &hs, int x, int y)
 
 Mat hough_lines_acc(Mat &edges)
 {
-  Mat hs(num_rho_buckets, num_angle_buckets, CV_32FC1);
+  Mat hs(num_rho_buckets, num_angle_buckets, CV_32SC1);
 
   for (int y = 0; y < edges.rows; y++) {
     for (int x = 0; x < edges.cols; x++) {
@@ -55,6 +58,83 @@ Mat hough_lines_acc(Mat &edges)
     }
   }
   return hs;
+}
+
+const char hough_transform_source[] = BOOST_COMPUTE_STRINGIZE_SOURCE (
+  __kernel void hough_transform(read_only image2d_t edges,
+                                __global int *hs,
+                                int num_rho_buckets,
+                                float max_rho,
+                                int num_angle_buckets) {
+    sampler_t sampler =( CLK_NORMALIZED_COORDS_FALSE |
+                         CLK_FILTER_NEAREST |
+                         CLK_ADDRESS_CLAMP_TO_EDGE);
+    const int x = get_global_id(0);
+    const int y = get_global_id(1);
+    const int angle_bucket = get_global_id(2);
+
+    int2 coord = (int2)(x, y);
+    int is_edge = read_imagei(edges, sampler, coord).x;
+    if (!is_edge) return;
+
+    float theta = M_PI_F * float(angle_bucket) / float(num_angle_buckets);
+    float rho = x * cos(theta) + y * sin(theta);
+    size_t rho_bucket = int(num_rho_buckets * ((rho / (2 * max_rho)) + 0.5));
+    int index = angle_bucket + num_angle_buckets * rho_bucket;
+    atomic_add(&hs[index], 1);
+  }
+);
+
+Mat hough_lines_acc_compute(Mat &h_edges)
+{
+  compute::device device = compute::system::default_device();
+  compute::context context(device);
+  compute::command_queue queue(context, device);
+
+  Mat h_hs(num_rho_buckets, num_angle_buckets, CV_32FC1);
+  compute::vector<int> d_hs(num_rho_buckets * num_angle_buckets, context);
+  std::vector<int> h_hs_vec(num_rho_buckets * num_angle_buckets);
+
+  compute::program hough_transform_program = compute::program::create_with_source(hough_transform_source, context);
+  try {
+    hough_transform_program.build();
+  } catch(compute::opencl_error e) {
+    std::cout << "Build Error: " << std::endl
+              << hough_transform_program.build_log();
+    exit(-1);
+  }
+  compute::kernel hough_transform(hough_transform_program, "hough_transform");
+
+  compute::image2d d_edges = compute::opencv_create_image2d_with_mat(h_edges, compute::image2d::read_only, queue);
+
+  hough_transform.set_arg(0, d_edges);
+  hough_transform.set_arg(1, d_hs.get_buffer());
+  hough_transform.set_arg(2, num_rho_buckets);
+  hough_transform.set_arg(3, max_rho);
+  hough_transform.set_arg(4, num_angle_buckets);
+
+  size_t global_size[3] = { (size_t)h_edges.rows, (size_t)h_edges.cols, (size_t)num_angle_buckets };
+  queue.enqueue_nd_range_kernel(hough_transform, 3, NULL, global_size, NULL);
+  queue.finish();
+  // compute::copy(d_hs.begin(), d_hs.end(), h_hs.data, queue);
+  compute::copy(d_hs.begin(), d_hs.end(), h_hs_vec.begin(), queue);
+
+  int max = 0;
+  for (int j = 0; j < h_hs.rows; j++) {
+    for (int i = 0; i < h_hs.cols; i++) {
+      int index = j * h_hs.cols + i;
+      max = std::max(max, h_hs_vec[index]);
+    }
+  }
+
+  for (int j = 0; j < h_hs.rows; j++) {
+    for (int i = 0; i < h_hs.cols; i++) {
+      int index = j * h_hs.cols + i;
+      h_hs.at<float>(j, i) = float(h_hs_vec[index]) / float(max);
+    }
+  }
+
+  return h_hs;
 }
 
 struct indices {
@@ -167,10 +247,11 @@ int main()
   Canny(smooth, edges, 100, 200);
   imshow("Edges", edges);
 
-  Mat houghSpace = hough_lines_acc(edges);
-  imshow("Hough Space", houghSpace);
+  Mat houghSpace = hough_lines_acc_compute(edges);
+  // Mat houghSpace = hough_lines_acc(edges);
+  imshow("Hough Space - raw", houghSpace);
 
-  auto peaks = hough_peaks(houghSpace, 10);
+  auto peaks = hough_peaks(houghSpace, 30);
 
   hough_draw_lines(img, *peaks);
   imshow("Highlighted Lines", img);

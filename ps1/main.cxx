@@ -19,7 +19,7 @@ void init(Mat &img)
   int width = img.cols;
   int height = img.rows;
   max_rho = ceil(std::max(width, height) * sqrt(2));
-  num_rho_buckets = 2 * int(max_rho) / 2;
+  num_rho_buckets = 2 * int(max_rho)/ 2;
 }
 
 float bucket_to_radians(int bucket)
@@ -48,13 +48,26 @@ void hough_line_acc(Mat &hs, int x, int y)
 
 Mat hough_lines_acc(Mat &edges)
 {
-  Mat hs(num_rho_buckets, num_angle_buckets, CV_32SC1);
+  Mat hs(num_rho_buckets, num_angle_buckets, CV_32FC1);
 
   for (int y = 0; y < edges.rows; y++) {
     for (int x = 0; x < edges.cols; x++) {
       if (edges.at<unsigned char>(y, x)) {
         hough_line_acc(hs, x, y);
       }
+    }
+  }
+
+  float max = 0;
+  for (int j = 0; j < hs.rows; j++) {
+    for (int i = 0; i < hs.cols; i++) {
+      max = std::max(max, hs.at<float>(j, i));
+    }
+  }
+
+  for (int j = 0; j < hs.rows; j++) {
+    for (int i = 0; i < hs.cols; i++) {
+      hs.at<float>(j, i) = hs.at<float>(j, i) / max;
     }
   }
   return hs;
@@ -79,7 +92,7 @@ const char hough_transform_source[] = BOOST_COMPUTE_STRINGIZE_SOURCE (
 
     float theta = M_PI_F * float(angle_bucket) / float(num_angle_buckets);
     float rho = x * cos(theta) + y * sin(theta);
-    size_t rho_bucket = int(num_rho_buckets * ((rho / (2 * max_rho)) + 0.5));
+    int   rho_bucket = int(num_rho_buckets * ((rho / (2 * max_rho)) + 0.5));
     int index = angle_bucket + num_angle_buckets * rho_bucket;
     atomic_add(&hs[index], 1);
   }
@@ -113,7 +126,7 @@ Mat hough_lines_acc_compute(Mat &h_edges)
   hough_transform.set_arg(3, max_rho);
   hough_transform.set_arg(4, num_angle_buckets);
 
-  size_t global_size[3] = { (size_t)h_edges.rows, (size_t)h_edges.cols, (size_t)num_angle_buckets };
+  size_t global_size[3] = { (size_t)h_edges.cols, (size_t)h_edges.rows, (size_t)num_angle_buckets };
   queue.enqueue_nd_range_kernel(hough_transform, 3, NULL, global_size, NULL);
   queue.finish();
   // compute::copy(d_hs.begin(), d_hs.end(), h_hs.data, queue);
@@ -248,10 +261,12 @@ int main()
   imshow("Edges", edges);
 
   Mat houghSpace = hough_lines_acc_compute(edges);
-  // Mat houghSpace = hough_lines_acc(edges);
-  imshow("Hough Space - raw", houghSpace);
+  imshow("Hough Space - GPU", houghSpace);
 
-  auto peaks = hough_peaks(houghSpace, 30);
+  // Mat houghSpace = hough_lines_acc(edges);
+  // imshow("Hough Space - CPU", houghSpace);
+
+  auto peaks = hough_peaks(houghSpace, 20);
 
   hough_draw_lines(img, *peaks);
   imshow("Highlighted Lines", img);
